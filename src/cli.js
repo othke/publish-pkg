@@ -11,7 +11,11 @@ const chalk = require('chalk');
 const rimraf = require('rimraf');
 const tar = require('tar');
 const AWS = require('aws-sdk');
-const pkg = require('../package.json');
+
+const PACKAGE_DIR = process.cwd();
+const PACKAGE_BUILD = path.join(PACKAGE_DIR, '.build');
+const PACKAGE_BUILD_TAR = path.join(PACKAGE_BUILD, 'package');
+const pkg = require(path.join(PACKAGE_DIR, 'package.json'));
 
 const s3 = new AWS.S3();
 
@@ -35,8 +39,7 @@ const remove = path =>
  * @param {*} blackList
  */
 const listPackageFiles = (blackList = ['node_modules']) => {
-  const cwd = process.cwd();
-  const files = fs.readdirSync(cwd);
+  const files = fs.readdirSync(PACKAGE_DIR);
   return files.filter(file => !blackList.includes(file));
 };
 
@@ -45,29 +48,27 @@ const listPackageFiles = (blackList = ['node_modules']) => {
  * @param {*} files
  */
 const makePackageFolder = async files => {
-  const cwd = process.cwd();
-  const packageBuild = path.join(cwd, '.build');
-  const packageBase = path.join(packageBuild, 'package');
-  fs.mkdirSync(packageBuild);
-  fs.mkdirSync(packageBase);
+  fs.mkdirSync(PACKAGE_BUILD);
+  fs.mkdirSync(PACKAGE_BUILD_TAR);
   await Promise.all(
     files.map(file => {
-      const from = path.join(cwd, file);
-      const to = path.join(packageBase, file);
+      const from = path.join(PACKAGE_DIR, file);
+      const to = path.join(PACKAGE_BUILD_TAR, file);
       return fs.copy(from, to);
     })
   );
 };
 
+const checkPackageExists = async () => {
+  await s3.headObject().promise();
+};
+
 /**
  * Upload the package on S3
- * @param {*} packageBuild
  * @param {*} tarFiles
  */
-const uploadPackage = async (packageBuild, tarFiles) => {
-  const { name, version } = pkg;
-  const key = `${name}-${version}.tgz`;
-  process.chdir(packageBuild);
+const uploadPackage = async (tarFiles, key) => {
+  process.chdir(PACKAGE_BUILD);
   const pass = new PassThrough();
   tar.c({ gzip: true }, tarFiles).pipe(pass);
   const params = {
@@ -76,6 +77,7 @@ const uploadPackage = async (packageBuild, tarFiles) => {
     Body: pass
   };
   await s3.upload(params).promise();
+  process.chdir(PACKAGE_DIR);
 };
 
 /**
@@ -84,26 +86,24 @@ const uploadPackage = async (packageBuild, tarFiles) => {
 const publish = async () => {
   const { name, version } = pkg;
   if (!name || !version) {
-    console.log('package must have name and version');
+    console.log(chalk.red('package must have name and version'));
     process.exit(1);
   }
   const key = `${name}-${version}.tgz`;
   console.log(chalk.green(`Package: ${name} version: ${version} will be published`));
 
   // clean previous build and copy all package files into the .build/package dir
-  const packageBuild = path.join(process.cwd(), '.build');
-  await remove(packageBuild);
+  await remove(PACKAGE_BUILD);
   const packageFiles = listPackageFiles();
   await makePackageFolder(packageFiles);
   // upload package
-  await uploadPackage(packageBuild, ['package']);
+  await uploadPackage([PACKAGE_BUILD], key);
 
   // clean the build
-  await remove(packageBuild);
+  await remove(PACKAGE_BUILD);
   console.log(chalk.green(`Package: ${name} version: ${version} published`));
 };
 
-publish()
-  .catch(err => {
-    console.error(chalk.red(err));
-  });
+publish().catch(err => {
+  console.error(chalk.red(err));
+});
