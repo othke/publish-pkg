@@ -145,7 +145,7 @@ const publish = async (bucketName, force) => {
 
   // clean previous build and copy all package files into the .build/package dir
   await remove(PACKAGE_BUILD_DIR);
-  const packageFiles = listPackageFiles(name);
+  const packageFiles = listPackageFiles();
   await buildPackageDirectory(packageFiles);
   // upload package
   const pkg = await uploadPackage([PACKAGE_NAME], bucketName, key);
